@@ -1,0 +1,19 @@
+[project]
+name = "boxnet"
+version = "0.1.0"
+description = "Secure communication network application for Boxnet"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.22.0",
+    "firebase-admin>=6.2.0",
+    "pydantic>=2.0",
+    "pyrebase4>=4.5.0",
+    "email-validator>=2.0.0",
+    "pwinput>=1.0.2"
+]
+
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"

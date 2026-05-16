@@ -1,0 +1,17 @@
+serviceAccountKey.json
+*.json.enc
+
+config.json
+*.json.enc
+
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+.vscode/
+.DS_Store
