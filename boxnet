@@ -1,7 +1,8 @@
-#!/home/loga/boxnet/venv/bin/python3
+#!/workspaces/boxnet/venv/bin/python3
 import sys
 import time
 import pyrebase
+from firebase_admin import auth as admin_auth
 import secrets
 import string
 import smtplib
@@ -12,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from email_validator import validate_email, EmailNotValidError
 import hashlib
 
+
 folder = Path(__file__).resolve().parent
 GETFILE = folder / "config.json"
 with open(GETFILE, "r") as cf:
@@ -21,12 +23,46 @@ firebase = pyrebase.initialize_app(config)
 auth = firebase.auth()
 db = firebase.database()
 storage = firebase.storage()
-SESSION_FILE = Path.home() / ".boxnet_session.json"
+SESFILE = Path(__file__).resolve().parent / "session.json"
+
+def checkfile():
+    if not SESFILE.exists():
+        return None
+    try:
+        with open(SESFILE, "r") as f:
+            sesdata = json.load(f)
+        deline = datetime.fromisoformat(sesdata["expiry"])
+        curtime = datetime.now(timezone.utc)
+        if curtime > deline:
+            print(f"SESSION STATUS: EXPIRED.\nRedirecting to home ...")
+            return userexists()
+    
+        else:
+            print(f"SESSION STATUS: ACTIVE.")
+            boxid = sesdata.get("boxid")
+            return boxt(boxid)
+        
+        
+    except Exception:
+        print("Error with file reading or analysis.")
+        return None
+    
+def save_ses(boxid, email):
+    crntime = datetime.now(timezone.utc)
+    expiry = crntime + timedelta(days=7)
+    data = ({
+        "boxid": boxid,
+        "email": email,
+        "logtime": crntime.isoformat(),
+        "expiry": expiry.isoformat()
+    })
+
+    with open(SESFILE, "w") as f:
+        json.dump(data, f, indent=4)
 
 def stop():
     print("Exiting Boxnet...")
     sys.exit()
-
 def hash_existing_data():
     users = db.child("users").get().val()
     if users:
@@ -50,13 +86,13 @@ def userexists():
     con = input("Choose an option (1-4): ")
     if con == "1":
         time.sleep(1)
-        return "register"
+        return register()
     elif con == "2":
         time.sleep(1)
-        return "login"
+        return login()
     elif con == "3":
         time.sleep(1)
-        return "pin"
+        return boxt()
     else:
         stop()
 
@@ -85,18 +121,17 @@ def login():
     print("="*30)
     print("      BOXNET LOGIN")
     print("="*30)
-    
+    users_data = db.child("users").get().val()
     while True:
         identifier = input("Enter your email or BoxID: ")
-        password = pwinput.pwinput("Enter your password: ", mask="*")
+        password = input("Enter your password. Or enter 'f/forgot' to reset password: ")
         
         is_email, normalized_email = is_email_valid(identifier)
         
         if is_email:
-            users = db.child("users").get().val()
             user_found = None
-            if users:
-                for boxid, data in users.items():
+            if users_data:
+                for boxid, data in users_data.items():
                     if data.get("email") == normalized_email:
                         user_found = data
                         user_found["boxid"] = boxid
@@ -115,13 +150,99 @@ def login():
             try:
                 user = auth.sign_in_with_email_and_password(user_found["email"], password)
                 print("Login successful.")
+                save_ses(user_found["boxid"], user_found["email"])
                 return user_found
             except Exception as e:
                 print(f"Authentication failed: {e}")
                 continue
+        elif password in ["f", "forgot"]:
+           resetpass(user_found["boxid"])
         else:
             print("Invalid password. Please try again.")
             return login()
+
+def resetpass(boxid):
+    print("\n==================================")
+    print("    RESET ACCOUNT PASS     ")
+    print("==================================")
+    
+    email_input = input("Enter your registered email address: ").strip()
+    
+    is_email, normalized_email = is_email_valid(email_input)
+    
+    if not is_email:
+        print("❌ Invalid email format. Please check your spelling and try again.")
+        return
+    
+    try:
+
+        sender = "blackprol1947@gmail.com"
+        sendername = "Boxnet"
+        password = "emll emzj wirc hxda"
+        vcode = genvcode()
+        
+        message = (
+            f"From: {sendername} <{sender}>\n"
+            f"To: {any} <{email_input}>\n" 
+            f"Subject: BoxID Verification Code\n"
+            f"Content-Type: text/html; charset=UTF-8\n\n"
+        )
+
+        html = f"""
+            <html>
+            <body style="font-family: Arial, sans-serif; color: #333;">
+            <div style="max-width: 400px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+            <h2 style="text-align: center; color: #2c3e50;">BoxID Verification</h2>
+            <p>Please enter this code to verify your BoxID: </p>
+            <div style="text-align: center; margin: 20px 0; font-size: 24px; font-weight: bold; letter-spacing: 4px; background: #eee; padding: 10px;">
+            {vcode}
+            </div>
+            <p>The Boxnet Team</p>
+            </div>
+            </body>
+            </html>
+        """
+
+        msg = message + html
+        with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
+            smtp.starttls()
+            smtp.login(sender, password)
+            smtp.sendmail(sender, email_input, msg)
+        
+        
+        print(f"\n Success. An Vcode sent to your inbox")
+        print("Please check your inbox (and spam folder) to complete the reset.")
+        getv = input("Enter the vcode sent to your inbox: ").strip()
+
+        if getv == vcode:
+            print("\nPassword rules:")
+            print("- At least 8 characters")
+            print("- At least one uppercase letter")
+            print("- At least one number")
+            while True:
+                newpaw = pwinput.pwinput("Set your password: ", mask="*")
+                pconfirm = pwinput.pwinput("Retype your password: ", mask="*")
+                if not strpss(newpaw):
+                    print("Password does not meet requirements. Please try again.")
+                    continue
+                if pconfirm == newpaw:
+                    enpaw = hashlib.sha256(newpaw.encode()).hexdigest()
+                    db.child("users").child(boxid).update({"password": enpaw})
+                    try:
+                        user_record = admin_auth.get_user_by_email(email_input)
+                        admin_auth.update_user(user_record.uid, password=newpaw)
+                        print("Password updated successfully!")
+                    except Exception as auth_err:
+                        print(f"Warning: Could not auto-sync auth panel: {auth_err}")
+                        return login()
+
+                
+                if pconfirm != newpaw:
+                    print("Passwords do not match. Please type both passwords again.")
+                    continue
+    except Exception as e:
+        print("Error sending vcode. {e}")
+
 
 def register():
     while True:
@@ -214,6 +335,7 @@ def register():
         try:
             db.child("users").child(boxid).set(user_data)
             print("User data stored in database.")
+            save_ses(user["boxid"], user["email"])
         except Exception as e:
             print(f"Error storing data: {e}")
             stop()
@@ -273,18 +395,6 @@ def boxt(boxid):
         else:
             print(f"Command not recognized: {command}")
 
-def app():
-    time.sleep(1)
-    banner()
-    hash_existing_data()
-    choice = userexists()
-    if choice == "register":
-        register()
-    elif choice == "login":
-        login()
-
-def main():
-    app()
-
 if __name__ == "__main__":
-    main()
+    checkfile()
+    userexists()
